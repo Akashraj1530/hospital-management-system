@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Hospital Management — Admin</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root {
+      --bg:#0f172a; --card:#111827; --muted:#94a3b8; --text:#e5e7eb;
+      --accent:#60a5fa; --danger:#ef4444; --warn:#f59e0b; --ok:#22c55e;
+      --border:#1f2937; --chip:#0b1220;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;background:linear-gradient(180deg,#0b1020,#0f172a);color:var(--text);font-family:Inter,system-ui,Arial}
+    .wrap{max-width:1200px;margin:32px auto;padding:0 16px}
+    .topbar{display:flex;gap:12px;align-items:center;justify-content:space-between;margin-bottom:16px}
+    .brand{font-weight:700;font-size:20px;letter-spacing:.4px}
+    .panel{background:rgba(255,255,255,0.04);border:1px solid var(--border);border-radius:16px;padding:16px;box-shadow:0 10px 30px rgba(0,0,0,.25)}
+    .controls{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+    select,input[type="text"]{background:#0b1220;border:1px solid #223;outline:none;color:var(--text);padding:10px 12px;border-radius:10px}
+    .btn{border:1px solid #223;background:#10182b;color:var(--text);padding:10px 14px;border-radius:12px;cursor:pointer}
+    .btn:hover{background:#0b1220}
+    .btn.accent{border-color:#1d4ed8;background:#12213e}
+    .btn.ok{border-color:#14532d;background:#0f1e16}
+    .btn.warn{border-color:#7c2d12;background:#1a120e}
+    .btn.danger{border-color:#7f1d1d;background:#1c1010}
+    .table-wrap{overflow:auto;border-radius:12px;border:1px solid var(--border)}
+    table{width:100%;border-collapse:collapse;background:#0b1220}
+    th,td{border-bottom:1px solid #142; padding:10px 12px; text-align:left; white-space:nowrap}
+    th{position:sticky;top:0;background:#0e1526;font-weight:600}
+    tr:hover td{background:#0e162b}
+    .chip{display:inline-flex;align-items:center;gap:6px;border:1px solid #1f2c45;background:var(--chip);padding:4px 8px;border-radius:999px;font-size:12px;color:#9fb3d1}
+    .actions{display:flex;gap:6px}
+    .empty{padding:18px;color:#9fb3d1}
+    /* Modal */
+    .modal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;padding:20px}
+    .modal.open{display:flex}
+    .card{background:#0b1220;border:1px solid var(--border);border-radius:16px;padding:18px;max-width:640px;width:100%}
+    .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+    .grid .full{grid-column:1 / -1}
+    label{font-size:12px;color:#9fb3d1;margin-bottom:6px;display:block}
+    .field{display:flex;flex-direction:column}
+    .muted{color:#9fb3d1}
+    .pill{border:1px dashed #244;padding:6px 10px;border-radius:10px;color:#9db}
+    .footer{display:flex;justify-content:flex-end;gap:10px;margin-top:12px}
+  </style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="topbar">
+    <div class="brand">🏥 Hospital Management — Admin</div>
+    <div class="chip">DB: <strong>hospital_db</strong></div>
+  </div>
+
+  <div class="panel">
+    <div class="controls">
+      <div>
+        <label class="muted">Select Table</label>
+        <select id="tableSelect"></select>
+      </div>
+      <div>
+        <label class="muted">Search</label>
+        <input id="searchInput" type="text" placeholder="Type to filter current table..." />
+      </div>
+      <div style="margin-left:auto">
+        <label class="muted">Actions</label><br/>
+        <button class="btn accent" id="addBtn">➕ Add New</button>
+        <button class="btn" id="refreshBtn">⟳ Refresh</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-top:14px">
+    <div id="tableInfo" class="muted" style="margin-bottom:8px"></div>
+    <div class="table-wrap">
+      <table id="dataTable">
+        <thead><tr id="theadRow"></tr></thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+    <div id="emptyState" class="empty" style="display:none">No records found.</div>
+  </div>
+
+  <p class="muted" style="margin-top:10px">
+    Tip: Appointment & Billing forms show smart dropdowns for Patient/Doctor.
+  </p>
+
+</div>
+
+<!-- Modal -->
+<div id="modal" class="modal">
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <h3 id="modalTitle" style="margin:0">Add</h3>
+      <button class="btn" onclick="closeModal()">✖</button>
+    </div>
+    <form id="form" class="grid"></form>
+    <div class="footer">
+      <button class="btn" onclick="closeModal()" type="button">Cancel</button>
+      <button class="btn ok" id="saveBtn">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = "http://localhost:5000";
+const tableSelect = document.getElementById("tableSelect");
+const searchInput = document.getElementById("searchInput");
+const theadRow = document.getElementById("theadRow");
+const tbody = document.getElementById("tbody");
+const emptyState = document.getElementById("emptyState");
+const tableInfo = document.getElementById("tableInfo");
+
+const modal = document.getElementById("modal");
+const form = document.getElementById("form");
+const modalTitle = document.getElementById("modalTitle");
+const addBtn = document.getElementById("addBtn");
+const refreshBtn = document.getElementById("refreshBtn");
+
+let currentTable = null;
+let columns = [];      // columns metadata for current table
+let primaryKey = null; // pk name
+let dataset = [];      // current rows
+let editId = null;     // id when editing
+
+// Friendly labels for *_id dropdowns
+const LABEL_FIELDS = {
+  patient: "patient_name",
+  doctor: "doctor_name",
+  department: "department_name",
+  staff: "staff_name",
+  medicine: "medicine_name",
+  room: "room_no"
+};
+
+// ------------- INIT -------------
+(async function init(){
+  await loadTables();
+  addBtn.addEventListener("click", () => openModal("add"));
+  refreshBtn.addEventListener("click", () => reload());
+  searchInput.addEventListener("input", filterRows);
+  await reload();
+})();
+
+async function loadTables(){
+  const res = await fetch(`${API}/tables`);
+  const tables = await res.json();
+  tableSelect.innerHTML = tables.map(t => `<option value="${t}">${t}</option>`).join("");
+  tableSelect.addEventListener("change", reload);
+  currentTable = tableSelect.value;
+}
+
+async function reload(){
+  currentTable = tableSelect.value;
+  await loadColumns(currentTable);
+  await loadData(currentTable);
+  renderTable();
+  tableInfo.textContent = `${currentTable.toUpperCase()} — ${dataset.length} row(s)`;
+}
+
+async function loadColumns(table){
+  const res = await fetch(`${API}/table/${table}/columns`);
+  const data = await res.json();
+  columns = data;
+  primaryKey = (columns.find(c => c.isPrimary) || {}).name || null;
+}
+
+async function loadData(table){
+  const res = await fetch(`${API}/table/${table}`);
+  dataset = await res.json();
+}
+
+// ------------- RENDER -------------
+function renderTable(){
+  // Header
+  theadRow.innerHTML = "";
+  columns.forEach(c => {
+    const th = document.createElement("th");
+    th.textContent = c.name;
+    theadRow.appendChild(th);
+  });
+  const th = document.createElement("th");
+  th.textContent = "Actions";
+  theadRow.appendChild(th);
+
+  // Body
+  tbody.innerHTML = "";
+  if (!dataset || dataset.length === 0){
+    emptyState.style.display = "block";
+    return;
+  }
+  emptyState.style.display = "none";
+
+  dataset.forEach(row => {
+    const tr = document.createElement("tr");
+    columns.forEach(c => {
+      const td = document.createElement("td");
+      td.textContent = row[c.name] ?? "";
+      tr.appendChild(td);
+    });
+    const tdAct = document.createElement("td");
+    tdAct.className = "actions";
+    tdAct.innerHTML = `
+      <button class="btn" onclick='onEdit(${JSON.stringify(row[primaryKey])})'>✏️ Edit</button>
+      <button class="btn danger" onclick='onDelete(${JSON.stringify(row[primaryKey])})'>🗑️ Delete</button>
+    `;
+    tr.appendChild(tdAct);
+    tbody.appendChild(tr);
+  });
+
+  filterRows(); // apply filter if user typed
+}
+
+// ------------- SEARCH -------------
+function filterRows(){
+  const q = (searchInput.value || "").toLowerCase();
+  Array.from(tbody.children).forEach(tr => {
+    tr.style.display = tr.innerText.toLowerCase().includes(q) ? "" : "none";
+  });
+}
+
+// ------------- MODAL + FORM -------------
+function openModal(mode, row = null){
+  modal.classList.add("open");
+  form.innerHTML = "";
+  editId = null;
+
+  const isEdit = mode === "edit";
+  modalTitle.textContent = `${isEdit ? "Edit" : "Add"} ${currentTable}`;
+
+  columns.forEach(col => {
+    // Skip auto-increment primary key on Add
+    if (!isEdit && col.isPrimary && col.extra?.includes("auto_increment")) return;
+
+    const wrap = document.createElement("div");
+    wrap.className = "field";
+    wrap.innerHTML = `<label>${col.name} ${col.nullable ? "" : "*"}</label>`;
+
+    const input = createFieldInput(currentTable, col);
+    if (isEdit) {
+      input.value = (row && row[col.name] != null) ? row[col.name] : "";
+    }
+    // PK should be readonly on Edit
+    if (isEdit && col.isPrimary) input.disabled = true;
+
+    wrap.appendChild(input);
+    // full width if long
+    if (String(col.name).length > 20) wrap.classList.add("full");
+    form.appendChild(wrap);
+  });
+
+  // Save handler
+  const saveBtn = document.getElementById("saveBtn");
+  saveBtn.onclick = async (e) => {
+    e.preventDefault();
+    const payload = formToJSON();
+    try {
+      if (isEdit) {
+        await fetch(`${API}/table/${currentTable}/${editId}`, {
+          method: "PUT",
+          headers: {"Content-Type":"application/json"},
+          body: JSON.stringify(payload)
+        });
+      } else {
+        await fetch(`${API}/table/${currentTable}`, {
+          method: "POST",
+          headers: {"Content-Type":"application/json"},
+          body: JSON.stringify(payload)
+        });
+      }
+      closeModal();
+      await reload();
+    } catch(err){
+      alert("Error: " + err.message);
+    }
+  };
+}
+
+function closeModal(){
+  modal.classList.remove("open");
+  form.innerHTML = "";
+  editId = null;
+}
+
+function formToJSON(){
+  const data = {};
+  Array.from(form.elements).forEach(el => {
+    if (!el.name || el.disabled) return;
+    // number conversion for INT/DECIMAL
+    const col = columns.find(c => c.name === el.name);
+    if (col && ["int","decimal","float","double","bigint","smallint","tinyint"].includes(col.type)) {
+      data[el.name] = el.value === "" ? null : Number(el.value);
+    } else {
+      data[el.name] = el.value === "" ? null : el.value;
+    }
+  });
+  return data;
+}
+
+/** Create smart input: select for *_id if related table exists; date for DATE; number for numeric */
+function createFieldInput(table, col){
+  const name = col.name;
+  const type = (col.type || "").toLowerCase();
+
+  // Foreign-like: xxx_id → use select if matching table exists
+  if (name.endsWith("_id")) {
+    const related = name.replace("_id",""); // e.g., patient_id -> patient
+    if (LABEL_FIELDS[related]) {
+      const select = document.createElement("select");
+      select.name = name;
+      select.innerHTML = `<option value="">-- Select ${related} --</option>`;
+      // load options
+      fetch(`${API}/lookup/${related}`).then(r=>r.json()).then(list=>{
+        select.innerHTML = `<option value="">-- Select ${related} --</option>` + 
+          list.map(o => `<option value="${o.id}">${o.label}</option>`).join("");
+      });
+      return select;
+    }
+  }
+
+  // DATE
+  if (type.includes("date")) {
+    const inp = document.createElement("input");
+    inp.type = "date";
+    inp.name = name;
+    return inp;
+  }
+
+  // DECIMAL/INT → number
+  if (["int","decimal","float","double","bigint","smallint","tinyint"].includes(type)) {
+    const inp = document.createElement("input");
+    inp.type = "number";
+    inp.step = type === "int" ? "1" : "0.01";
+    inp.name = name;
+    return inp;
+  }
+
+  // default → text
+  const inp = document.createElement("input");
+  inp.type = "text";
+  inp.name = name;
+  return inp;
+}
+
+// ------------- ROW ACTIONS -------------
+function onEdit(id){
+  const row = dataset.find(r => String(r[primaryKey]) === String(id));
+  editId = id;
+  openModal("edit", row);
+}
+
+async function onDelete(id){
+  if (!confirm("Delete this record?")) return;
+  await fetch(`${API}/table/${currentTable}/${id}`, { method:"DELETE" });
+  await reload();
+}
+</script>
+</body>
+</html>
