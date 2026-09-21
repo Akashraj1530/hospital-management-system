@@ -1,14 +1,20 @@
 {
   "name": "hospital-management-system",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Hospital Management System using Node.js, Express and MySQL",
+  "main": "server.js",
   "type": "module",
   "scripts": {
     "start": "node server.js"
-},
-  "keywords": [],
-  "author": "",
+  },
+  "keywords": [
+    "hospital",
+    "management",
+    "nodejs",
+    "express",
+    "mysql"
+  ],
+  "author": "Akash Raj",
   "license": "ISC",
   "dependencies": {
     "axios": "^1.13.2",
@@ -22,5 +28,8 @@
     "autoprefixer": "^10.4.21",
     "postcss": "^8.5.6",
     "tailwindcss": "^4.1.16"
+  },
+  "engines": {
+    "node": "20.x"
   }
 }
