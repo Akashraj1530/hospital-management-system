@@ -1,4 +1,6 @@
-// server.js
+// ======================================================
+// HOSPITAL MANAGEMENT SYSTEM - SERVER
+// ======================================================
 
 import express from "express";
 import cors from "cors";
@@ -7,7 +9,6 @@ import connection from "./database.js";
 
 const app = express();
 
-
 // ======================================================
 // MIDDLEWARE
 // ======================================================
@@ -15,595 +16,814 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-
 // ======================================================
-// HOME PAGE
-// ======================================================
-
-// Open index.html when visiting:
-// http://localhost:5000/
-
-app.get("/", (_req, res) => {
-  res.sendFile(path.join(process.cwd(), "index.html"));
-});
-
-
-// ======================================================
-// DATABASE CONFIGURATION
+// CONFIGURATION
 // ======================================================
 
-const DB_NAME = "hospital_db";
-
+const PORT = process.env.PORT || 5000;
+const DB_NAME = process.env.DB_NAME || "hospital_db";
 
 // ======================================================
 // ALLOWED TABLES
 // ======================================================
 
-// Only these tables can be accessed through the API.
-// This also helps prevent SQL injection through table names.
-
 const ALLOWED_TABLES = [
-  "patient",
-  "doctor",
-  "appointment",
-  "billing",
-  "department",
-  "room",
-  "staff",
-  "medicine"
+    "patient",
+    "doctor",
+    "appointment",
+    "billing",
+    "department",
+    "room",
+    "staff",
+    "medicine"
 ];
-
 
 // ======================================================
 // LABEL FIELDS
 // ======================================================
 
-// Used for displaying readable names in dropdowns.
-
 const LABEL_FIELDS = {
-  patient: "patient_name",
-  doctor: "doctor_name",
-  department: "department_name",
-  staff: "staff_name",
-  medicine: "medicine_name",
-  room: "room_no"
+    patient: "patient_name",
+    doctor: "doctor_name",
+    department: "department_name",
+    staff: "staff_name",
+    medicine: "medicine_name",
+    room: "room_no"
 };
 
-
 // ======================================================
-// HELPER: CHECK ALLOWED TABLE
+// CHECK ALLOWED TABLE
 // ======================================================
 
 function isAllowedTable(name) {
-  return ALLOWED_TABLES.includes(name);
+    return ALLOWED_TABLES.includes(name);
 }
 
-
 // ======================================================
-// HELPER: DATABASE QUERY
+// DATABASE QUERY HELPER
 // ======================================================
 
-async function query(sql, params = []) {
-  return new Promise((resolve, reject) => {
+function query(sql, params = []) {
+    return new Promise((resolve, reject) => {
 
-    connection.query(sql, params, (err, rows) => {
+        connection.query(sql, params, (error, rows) => {
 
-      if (err) {
-        return reject(err);
-      }
+            if (error) {
+                reject(error);
+                return;
+            }
 
-      resolve(rows);
+            resolve(rows);
+        });
 
     });
-
-  });
 }
 
+// ======================================================
+// HOME PAGE
+// ======================================================
+
+app.get("/", (req, res) => {
+
+    res.sendFile(
+        path.join(process.cwd(), "index.html")
+    );
+
+});
+
+// ======================================================
+// HEALTH CHECK
+// ======================================================
+
+app.get("/health", (req, res) => {
+
+    res.json({
+        status: "OK",
+        message: "Hospital Management Server is running"
+    });
+
+});
+
+app.get("/api/health", (req, res) => {
+
+    res.json({
+        status: "OK",
+        message: "Hospital Management API is running"
+    });
+
+});
+
+// ======================================================
+// GET ALL TABLES
+// ======================================================
+
+function getTables(req, res) {
+
+    res.json(ALLOWED_TABLES);
+
+}
+
+app.get("/tables", getTables);
+app.get("/api/tables", getTables);
 
 // ======================================================
 // GET PRIMARY KEY
 // ======================================================
 
-// Finds AUTO_INCREMENT primary key of a table.
-
 async function getPrimaryKey(table) {
 
-  const sql = `
-    SELECT COLUMN_NAME
-    FROM INFORMATION_SCHEMA.COLUMNS
-    WHERE TABLE_SCHEMA = ?
-      AND TABLE_NAME = ?
-      AND EXTRA LIKE '%auto_increment%'
-    LIMIT 1
-  `;
+    const sql = `
+        SELECT COLUMN_NAME
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = ?
+        AND TABLE_NAME = ?
+        AND COLUMN_KEY = 'PRI'
+        ORDER BY ORDINAL_POSITION
+        LIMIT 1
+    `;
 
-  const rows = await query(sql, [DB_NAME, table]);
+    const rows = await query(sql, [
+        DB_NAME,
+        table
+    ]);
 
-  return rows[0]?.COLUMN_NAME || null;
+    return rows[0]?.COLUMN_NAME || null;
 }
-
 
 // ======================================================
 // GET TABLE COLUMNS
 // ======================================================
-
-// Gets column information from MySQL.
 
 async function getColumns(table) {
 
-  const sql = `
-    SELECT
-      COLUMN_NAME,
-      DATA_TYPE,
-      IS_NULLABLE,
-      COLUMN_KEY,
-      EXTRA
-    FROM INFORMATION_SCHEMA.COLUMNS
-    WHERE TABLE_SCHEMA = ?
-      AND TABLE_NAME = ?
-    ORDER BY ORDINAL_POSITION
-  `;
+    const sql = `
+        SELECT
+            COLUMN_NAME,
+            DATA_TYPE,
+            IS_NULLABLE,
+            COLUMN_KEY,
+            EXTRA
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = ?
+        AND TABLE_NAME = ?
+        ORDER BY ORDINAL_POSITION
+    `;
 
-  return await query(sql, [DB_NAME, table]);
+    return await query(sql, [
+        DB_NAME,
+        table
+    ]);
+
 }
 
-
 // ======================================================
-// GET ALL ALLOWED TABLES
-// ======================================================
-
-app.get("/tables", (_req, res) => {
-
-  res.json(ALLOWED_TABLES);
-
-});
-
-
-// ======================================================
-// GET ALL RECORDS FROM A TABLE
+// COLUMN API
+//
+// IMPORTANT:
+// This fixes:
+// GET /api/column/patient
 // ======================================================
 
-app.get("/table/:name", async (req, res) => {
+async function columnHandler(req, res) {
 
-  const { name } = req.params;
+    const table =
+        req.params.table || req.params.name;
 
-  // Check table name
-  if (!isAllowedTable(name)) {
+    if (!isAllowedTable(table)) {
 
-    return res.status(400).json({
-      error: "Table not allowed"
-    });
+        return res.status(400).json({
+            error: "Table not allowed"
+        });
 
-  }
+    }
 
-  try {
+    try {
 
-    const rows = await query(
-      `SELECT * FROM \`${name}\``
-    );
+        const cols = await getColumns(table);
+        const pk = await getPrimaryKey(table);
 
-    res.json(rows);
+        const result = cols.map(col => {
 
-  } catch (e) {
+            return {
+                name: col.COLUMN_NAME,
+                type: col.DATA_TYPE,
+                nullable: col.IS_NULLABLE === "YES",
+                key: col.COLUMN_KEY,
+                extra: col.EXTRA,
+                isPrimary: col.COLUMN_NAME === pk
+            };
 
-    res.status(500).json({
-      error: e.message
-    });
+        });
 
-  }
+        res.json(result);
 
-});
+    } catch (error) {
 
+        console.error(
+            "Column error:",
+            error
+        );
+
+        res.status(500).json({
+            error: error.message
+        });
+
+    }
+
+}
+
+// New frontend/API route
+app.get(
+    "/api/column/:table",
+    columnHandler
+);
+
+// Existing route
+app.get(
+    "/table/:name/columns",
+    columnHandler
+);
+
+// Additional API route
+app.get(
+    "/api/table/:name/columns",
+    columnHandler
+);
 
 // ======================================================
-// GET TABLE COLUMNS
+// GET ALL RECORDS
 // ======================================================
 
-app.get("/table/:name/columns", async (req, res) => {
+async function getTableHandler(req, res) {
 
-  const { name } = req.params;
+    const table = req.params.name;
 
-  // Check table name
-  if (!isAllowedTable(name)) {
+    if (!isAllowedTable(table)) {
 
-    return res.status(400).json({
-      error: "Table not allowed"
-    });
+        return res.status(400).json({
+            error: "Table not allowed"
+        });
 
-  }
+    }
 
-  try {
+    try {
 
-    const cols = await getColumns(name);
+        const rows = await query(
+            `SELECT * FROM \`${table}\``
+        );
 
-    const pk = await getPrimaryKey(name);
+        res.json(rows);
 
-    res.json(
+    } catch (error) {
 
-      cols.map(c => ({
+        console.error(
+            "Get table error:",
+            error
+        );
 
-        name: c.COLUMN_NAME,
+        res.status(500).json({
+            error: error.message
+        });
 
-        type: c.DATA_TYPE,
+    }
 
-        nullable: c.IS_NULLABLE === "YES",
+}
 
-        key: c.COLUMN_KEY,
+app.get(
+    "/table/:name",
+    getTableHandler
+);
 
-        extra: c.EXTRA,
-
-        isPrimary: c.COLUMN_NAME === pk
-
-      }))
-
-    );
-
-  } catch (e) {
-
-    res.status(500).json({
-      error: e.message
-    });
-
-  }
-
-});
-
+app.get(
+    "/api/table/:name",
+    getTableHandler
+);
 
 // ======================================================
 // LOOKUP DATA
 // ======================================================
 
-// Example:
-// /lookup/patient
-// /lookup/doctor
-// /lookup/department
+async function lookupHandler(req, res) {
 
-app.get("/lookup/:table", async (req, res) => {
+    const table = req.params.table;
 
-  const t = req.params.table;
+    if (!isAllowedTable(table)) {
 
-  // Check table
-  if (!isAllowedTable(t)) {
+        return res.status(400).json({
+            error: "Table not allowed"
+        });
 
-    return res.status(400).json({
-      error: "Table not allowed"
-    });
+    }
 
-  }
+    try {
 
-  try {
+        const pk =
+            await getPrimaryKey(table);
 
-    const pk = await getPrimaryKey(t);
+        if (!pk) {
 
-    const label = LABEL_FIELDS[t] || pk;
+            return res.status(400).json({
+                error: `Primary key not found for table ${table}`
+            });
 
-    const rows = await query(
-      `SELECT \`${pk}\` AS id, \`${label}\` AS label
-       FROM \`${t}\``
-    );
+        }
 
-    res.json(rows);
+        const label =
+            LABEL_FIELDS[table] || pk;
 
-  } catch (e) {
+        const columns =
+            await getColumns(table);
 
-    res.status(500).json({
-      error: e.message
-    });
+        const labelExists =
+            columns.some(
+                col => col.COLUMN_NAME === label
+            );
 
-  }
+        const actualLabel =
+            labelExists ? label : pk;
 
-});
+        const rows = await query(
+            `
+            SELECT
+                \`${pk}\` AS id,
+                \`${actualLabel}\` AS label
+            FROM \`${table}\`
+            `
+        );
 
+        res.json(rows);
+
+    } catch (error) {
+
+        console.error(
+            "Lookup error:",
+            error
+        );
+
+        res.status(500).json({
+            error: error.message
+        });
+
+    }
+
+}
+
+app.get(
+    "/lookup/:table",
+    lookupHandler
+);
+
+app.get(
+    "/api/lookup/:table",
+    lookupHandler
+);
 
 // ======================================================
 // INSERT NEW RECORD
 // ======================================================
 
-app.post("/table/:name", async (req, res) => {
+async function insertHandler(req, res) {
 
-  const { name } = req.params;
+    const table = req.params.name;
 
-  // Check table
-  if (!isAllowedTable(name)) {
+    if (!isAllowedTable(table)) {
 
-    return res.status(400).json({
-      error: "Table not allowed"
-    });
-
-  }
-
-  try {
-
-    // Get columns
-    const cols = await getColumns(name);
-
-    // Get primary key
-    const pk = await getPrimaryKey(name);
-
-    // Remove AUTO_INCREMENT primary key
-    const allowedCols = cols.filter(
-
-      c =>
-        c.COLUMN_NAME !== pk ||
-        !c.EXTRA.includes("auto_increment")
-
-    );
-
-    // Find fields that exist in request body
-    const insertCols = allowedCols
-
-      .filter(
-        c => c.COLUMN_NAME in req.body
-      )
-
-      .map(
-        c => c.COLUMN_NAME
-      );
-
-
-    // No valid fields
-    if (insertCols.length === 0) {
-
-      return res.status(400).json({
-
-        error: "No valid fields to insert"
-
-      });
+        return res.status(400).json({
+            error: "Table not allowed"
+        });
 
     }
 
+    try {
 
-    // Get values
-    const values = insertCols.map(
+        console.log(
+            `INSERT request for ${table}:`,
+            req.body
+        );
 
-      c => req.body[c]
+        const cols =
+            await getColumns(table);
 
-    );
+        const pk =
+            await getPrimaryKey(table);
 
+        // Remove auto-increment primary key
+        const allowedCols =
+            cols.filter(col => {
 
-    // Create ?
-    const placeholders = insertCols
+                if (
+                    col.COLUMN_NAME === pk &&
+                    col.EXTRA.includes("auto_increment")
+                ) {
+                    return false;
+                }
 
-      .map(() => "?")
+                return true;
 
-      .join(", ");
+            });
 
+        // Find columns supplied by frontend
+        const insertCols =
+            allowedCols
+                .filter(
+                    col =>
+                        Object.prototype.hasOwnProperty.call(
+                            req.body,
+                            col.COLUMN_NAME
+                        )
+                )
+                .map(
+                    col => col.COLUMN_NAME
+                );
 
-    // SQL query
-    const sql = `
-      INSERT INTO \`${name}\`
-      (${insertCols
-        .map(c => `\`${c}\``)
-        .join(", ")})
-      VALUES (${placeholders})
-    `;
+        if (insertCols.length === 0) {
 
+            return res.status(400).json({
+                error: "No valid fields to insert",
+                receivedData: req.body,
+                availableColumns:
+                    allowedCols.map(
+                        c => c.COLUMN_NAME
+                    )
+            });
 
-    await query(sql, values);
+        }
 
+        const values =
+            insertCols.map(
+                col => req.body[col]
+            );
 
-    res.json({
+        const placeholders =
+            insertCols
+                .map(() => "?")
+                .join(", ");
 
-      message: "✅ Inserted"
+        const columnNames =
+            insertCols
+                .map(
+                    col => `\`${col}\``
+                )
+                .join(", ");
 
-    });
+        const sql = `
+            INSERT INTO \`${table}\`
+            (${columnNames})
+            VALUES (${placeholders})
+        `;
 
+        console.log(
+            "INSERT SQL:",
+            sql
+        );
 
-  } catch (e) {
+        console.log(
+            "INSERT VALUES:",
+            values
+        );
 
-    res.status(500).json({
+        const result =
+            await query(sql, values);
 
-      error: e.message
+        res.status(201).json({
 
-    });
+            message: "Record inserted successfully",
 
-  }
+            insertId:
+                result.insertId || null
 
-});
+        });
 
+    } catch (error) {
+
+        console.error(
+            "INSERT ERROR:",
+            error
+        );
+
+        res.status(500).json({
+
+            error: error.message
+
+        });
+
+    }
+
+}
+
+app.post(
+    "/table/:name",
+    insertHandler
+);
+
+app.post(
+    "/api/table/:name",
+    insertHandler
+);
 
 // ======================================================
 // UPDATE RECORD
 // ======================================================
 
-app.put("/table/:name/:id", async (req, res) => {
+async function updateHandler(req, res) {
 
-  const { name, id } = req.params;
+    const table =
+        req.params.name;
 
+    const id =
+        req.params.id;
 
-  // Check table
-  if (!isAllowedTable(name)) {
+    if (!isAllowedTable(table)) {
 
-    return res.status(400).json({
-
-      error: "Table not allowed"
-
-    });
-
-  }
-
-
-  try {
-
-    // Get columns
-    const cols = await getColumns(name);
-
-    // Get primary key
-    const pk = await getPrimaryKey(name);
-
-
-    // Remove primary key from update
-    const updatable = cols.filter(
-
-      c => c.COLUMN_NAME !== pk
-
-    );
-
-
-    // Find fields to update
-    const selectedCols = updatable
-
-      .filter(
-        c => c.COLUMN_NAME in req.body
-      );
-
-
-    // No fields
-    if (selectedCols.length === 0) {
-
-      return res.status(400).json({
-
-        error: "No fields to update"
-
-      });
+        return res.status(400).json({
+            error: "Table not allowed"
+        });
 
     }
 
+    try {
 
-    // SET statements
-    const setCols = selectedCols.map(
+        const cols =
+            await getColumns(table);
 
-      c => `\`${c.COLUMN_NAME}\` = ?`
+        const pk =
+            await getPrimaryKey(table);
 
-    );
+        if (!pk) {
 
+            return res.status(400).json({
+                error: "Primary key not found"
+            });
 
-    // Values
-    const values = selectedCols.map(
+        }
 
-      c => req.body[c.COLUMN_NAME]
+        const updateCols =
+            cols.filter(col => {
 
-    );
+                return (
+                    col.COLUMN_NAME !== pk &&
+                    Object.prototype.hasOwnProperty.call(
+                        req.body,
+                        col.COLUMN_NAME
+                    )
+                );
 
+            });
 
-    // SQL query
-    const sql = `
-      UPDATE \`${name}\`
-      SET ${setCols.join(", ")}
-      WHERE \`${pk}\` = ?
-    `;
+        if (updateCols.length === 0) {
 
+            return res.status(400).json({
+                error: "No fields to update"
+            });
 
-    await query(
+        }
 
-      sql,
-      [...values, id]
+        const setStatements =
+            updateCols.map(
+                col =>
+                    `\`${col.COLUMN_NAME}\` = ?`
+            );
 
-    );
+        const values =
+            updateCols.map(
+                col =>
+                    req.body[col.COLUMN_NAME]
+            );
 
+        values.push(id);
 
-    res.json({
+        const sql = `
+            UPDATE \`${table}\`
+            SET ${setStatements.join(", ")}
+            WHERE \`${pk}\` = ?
+        `;
 
-      message: "✏️ Updated"
+        await query(
+            sql,
+            values
+        );
 
-    });
+        res.json({
 
+            message:
+                "Record updated successfully"
 
-  } catch (e) {
+        });
 
-    res.status(500).json({
+    } catch (error) {
 
-      error: e.message
+        console.error(
+            "UPDATE ERROR:",
+            error
+        );
 
-    });
+        res.status(500).json({
 
-  }
+            error: error.message
 
-});
+        });
 
+    }
+
+}
+
+app.put(
+    "/table/:name/:id",
+    updateHandler
+);
+
+app.put(
+    "/api/table/:name/:id",
+    updateHandler
+);
 
 // ======================================================
 // DELETE RECORD
 // ======================================================
 
-app.delete("/table/:name/:id", async (req, res) => {
+async function deleteHandler(req, res) {
 
-  const { name, id } = req.params;
+    const table =
+        req.params.name;
 
+    const id =
+        req.params.id;
 
-  // Check table
-  if (!isAllowedTable(name)) {
+    if (!isAllowedTable(table)) {
 
-    return res.status(400).json({
+        return res.status(400).json({
+            error: "Table not allowed"
+        });
 
-      error: "Table not allowed"
+    }
 
-    });
+    try {
 
-  }
+        const pk =
+            await getPrimaryKey(table);
 
+        if (!pk) {
 
-  try {
+            return res.status(400).json({
+                error: "Primary key not found"
+            });
 
-    // Get primary key
-    const pk = await getPrimaryKey(name);
+        }
 
+        const sql = `
+            DELETE FROM \`${table}\`
+            WHERE \`${pk}\` = ?
+        `;
 
-    // Delete query
-    const sql = `
-      DELETE FROM \`${name}\`
-      WHERE \`${pk}\` = ?
-    `;
+        const result =
+            await query(
+                sql,
+                [id]
+            );
 
+        res.json({
 
-    await query(sql, [id]);
+            message:
+                "Record deleted successfully",
 
+            affectedRows:
+                result.affectedRows
 
-    res.json({
+        });
 
-      message: "🗑️ Deleted"
+    } catch (error) {
 
-    });
+        console.error(
+            "DELETE ERROR:",
+            error
+        );
 
+        res.status(500).json({
 
-  } catch (e) {
+            error: error.message
 
-    res.status(500).json({
+        });
 
-      error: e.message
+    }
 
-    });
+}
 
-  }
+app.delete(
+    "/table/:name/:id",
+    deleteHandler
+);
 
-});
-
+app.delete(
+    "/api/table/:name/:id",
+    deleteHandler
+);
 
 // ======================================================
 // PATIENTS API
 // ======================================================
 
-// Backward compatibility
+async function patientsHandler(req, res) {
 
-app.get("/patients", async (_req, res) => {
+    try {
 
-  try {
+        const rows =
+            await query(
+                "SELECT * FROM `patient`"
+            );
 
-    const rows = await query(
-      "SELECT * FROM `patient`"
+        res.json(rows);
+
+    } catch (error) {
+
+        console.error(
+            "Patients error:",
+            error
+        );
+
+        res.status(500).json({
+            error: error.message
+        });
+
+    }
+
+}
+
+app.get(
+    "/patients",
+    patientsHandler
+);
+
+app.get(
+    "/api/patients",
+    patientsHandler
+);
+
+// ======================================================
+// 404 HANDLER
+// ======================================================
+
+app.use((req, res) => {
+
+    console.log(
+        "404 REQUEST:",
+        req.method,
+        req.originalUrl
     );
 
-    res.json(rows);
+    res.status(404).json({
 
-  } catch (e) {
+        error: "Route not found",
 
-    res.status(500).json({
+        method:
+            req.method,
 
-      error: e.message
+        path:
+            req.originalUrl
 
     });
 
-  }
-
 });
 
+// ======================================================
+// ERROR HANDLER
+// ======================================================
+
+app.use((error, req, res, next) => {
+
+    console.error(
+        "SERVER ERROR:",
+        error
+    );
+
+    res.status(500).json({
+
+        error:
+            error.message || "Internal Server Error"
+
+    });
+
+});
 
 // ======================================================
 // START SERVER
 // ======================================================
 
-const PORT = process.env.PORT || 5000;
+app.listen(
+    PORT,
+    "0.0.0.0",
+    () => {
 
-app.listen(PORT, "0.0.0.0", () => {
-    console.log(`🚀 Server running on port ${PORT}`);
-});
+        console.log(
+            `🚀 Server running on port ${PORT}`
+        );
+
+        console.log(
+            `📊 Database: ${DB_NAME}`
+        );
+
+        console.log(
+            "✅ Hospital Management API ready"
+        );
+
+    }
+);
